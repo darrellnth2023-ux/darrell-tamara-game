@@ -1,4 +1,4 @@
-  <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -6,25 +6,31 @@
   <title>Darrell & Tamara's Quality Time Game</title>
   <style>
     * { box-sizing: border-box; touch-action: manipulation; }
-    body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; color: #fff; text-align: center; margin: 0; padding: 15px; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; color: #fff; text-align: center; margin: 0; padding: 10px; }
     h1 { color: #e94560; margin: 0 0 5px 0; font-size: 22px; }
-    #turnBanner { font-size: 18px; font-weight: bold; margin-bottom: 10px; color: #f1c40f; }
-    #timer { font-size: 24px; font-weight: bold; color: #e94560; margin-bottom: 10px; }
-    .controls { display: flex; gap: 10px; justify-content: center; margin-bottom: 15px; }
+    #turnBanner { font-size: 18px; font-weight: bold; margin-bottom: 5px; color: #f1c40f; }
+    #timer { font-size: 22px; font-weight: bold; color: #e94560; margin-bottom: 10px; }
+    .controls { display: flex; gap: 10px; justify-content: center; margin-bottom: 10px; }
     button { background: #e94560; color: #fff; border: none; padding: 10px 16px; font-size: 15px; font-weight: bold; border-radius: 8px; cursor: pointer; }
     button.secondary { background: #0f3460; }
     button:disabled { opacity: 0.4; cursor: not-allowed; }
 
-    .area { border: 2px dashed #0f3460; margin: 10px auto; border-radius: 12px; padding: 10px; max-width: 600px; background: rgba(255,255,255,0.03); min-height: 80px; }
-    #stagingArea { border-color: #f1c40f; }
-    #rack { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; background: #16213e; padding: 12px; border-radius: 12px; max-width: 600px; margin: 0 auto; min-height: 80px; border: 2px solid #0f3460; }
+    /* Expanded Main Playing Table */
+    #board { min-height: 380px; width: 95%; max-width: 1000px; border: 3px dashed #e94560; margin: 10px auto; border-radius: 12px; padding: 15px; background: rgba(255,255,255,0.03); display: flex; flex-wrap: wrap; gap: 15px; align-content: flex-start; justify-content: flex-start; overflow-x: auto; }
+    
+    .set-box { border: 2px solid #4ecca3; padding: 8px; border-radius: 8px; background: rgba(78, 204, 163, 0.05); display: flex; gap: 5px; align-items: center; min-width: 150px; min-height: 70px; }
+    
+    #rack { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; background: #16213e; padding: 12px; border-radius: 12px; max-width: 1000px; width: 95%; margin: 0 auto; min-height: 85px; border: 2px solid #0f3460; }
 
-    .tile { width: 40px; height: 55px; background: #fff; font-weight: bold; font-size: 18px; line-height: 55px; border-radius: 6px; box-shadow: 0 3px 6px rgba(0,0,0,0.4); display: inline-block; cursor: pointer; user-select: none; margin: 3px; }
+    .tile { width: 42px; height: 58px; background: #fff; font-weight: bold; font-size: 20px; line-height: 58px; border-radius: 6px; box-shadow: 0 3px 6px rgba(0,0,0,0.4); display: inline-block; cursor: pointer; user-select: none; margin: 2px; text-align: center; }
+    .selected { outline: 3px solid #f1c40f; transform: translateY(-4px); }
+
     .red { color: #d62828; }
     .blue { color: #0077b6; }
     .black { color: #111; }
     .yellow { color: #f77f00; }
-    .wild { color: #9b59b6; background: #f1c40f; }
+    .wild-yellow { background: #f1c40f; color: #000; font-size: 24px; }
+    .wild-purple { background: #8e44ad; color: #fff; font-size: 24px; }
   </style>
 </head>
 <body>
@@ -34,14 +40,12 @@
 
   <div class="controls">
     <button id="btnDraw" onclick="drawTile()">Draw Tile (<span id="poolCount">0</span> left)</button>
-    <button id="btnSubmit" class="secondary" onclick="submitTurn()">End Turn / Play Set</button>
+    <button id="btnNewSet" class="secondary" onclick="createNewSet()">+ Create New Set</button>
+    <button id="btnSubmit" onclick="submitTurn()">End Turn</button>
   </div>
 
-  <h3>Staging Area (Your Uncommitted Play)</h3>
-  <div id="stagingArea" class="area"></div>
-
-  <h3>Table Area (Completed Mosaics)</h3>
-  <div id="board" class="area"></div>
+  <h3>Main Playing Table (Expands automatically)</h3>
+  <div id="board"></div>
 
   <h3>Your Rack</h3>
   <div id="rack"></div>
@@ -50,6 +54,10 @@
   <script>
     const socket = io();
     let myId = null;
+    let selectedTile = null; // { tile, source: 'rack'|'board', setIdx, tileIdx }
+    let localTableSets = [];
+    let localRack = [];
+    let isMyTurn = false;
 
     socket.on('connect', () => {
       myId = socket.id;
@@ -60,54 +68,62 @@
       document.getElementById('timer').innerText = `⏱️ ${time}s`;
     });
 
-    socket.on('errorMessage', (msg) => {
-      alert(msg);
-    });
+    socket.on('errorMessage', (msg) => { alert(msg); });
 
     socket.on('gameUpdate', (data) => {
       document.getElementById('poolCount').innerText = data.poolCount;
-      
-      const isMyTurn = data.activePlayerId === myId;
+      isMyTurn = data.activePlayerId === myId;
       document.getElementById('turnBanner').innerText = isMyTurn ? "YOUR TURN!" : "Opponent's Turn...";
+      
       document.getElementById('btnDraw').disabled = !isMyTurn;
+      document.getElementById('btnNewSet').disabled = !isMyTurn;
       document.getElementById('btnSubmit').disabled = !isMyTurn;
 
+      if (data.players[myId]) localRack = data.players[myId].rack;
+      localTableSets = data.tableSets;
+
+      renderAll();
+    });
+
+    function renderAll() {
       // Render Rack
       const rackEl = document.getElementById('rack');
       rackEl.innerHTML = '';
-      if (data.players[myId]) {
-        data.players[myId].rack.forEach(tile => {
-          const t = createTileElement(tile);
-          if (isMyTurn) t.onclick = () => socket.emit('stageTile', tile.id);
-          rackEl.appendChild(t);
-        });
-      }
-
-      // Render Staging
-      const stagingEl = document.getElementById('stagingArea');
-      stagingEl.innerHTML = '';
-      data.stagingTiles.forEach(tile => {
+      localRack.forEach((tile, idx) => {
         const t = createTileElement(tile);
-        if (isMyTurn) t.onclick = () => socket.emit('recallTile', tile.id);
-        stagingEl.appendChild(t);
+        if (selectedTile && selectedTile.source === 'rack' && selectedTile.tileIdx === idx) {
+          t.classList.add('selected');
+        }
+        if (isMyTurn) t.onclick = () => selectRackTile(tile, idx);
+        rackEl.appendChild(t);
       });
 
       // Render Board
       const boardEl = document.getElementById('board');
       boardEl.innerHTML = '';
-      data.tableSets.forEach(set => {
+      localTableSets.forEach((set, setIdx) => {
         const setDiv = document.createElement('div');
-        setDiv.style.margin = "5px";
-        setDiv.style.display = "inline-block";
-        setDiv.style.border = "1px solid #4ecca3";
-        setDiv.style.padding = "4px";
-        setDiv.style.borderRadius = "6px";
-        set.forEach(tile => {
-          setDiv.appendChild(createTileElement(tile));
+        setDiv.className = 'set-box';
+        setDiv.onclick = (e) => {
+          if (e.target === setDiv && selectedTile && isMyTurn) {
+            moveSelectedToSet(setIdx);
+          }
+        };
+
+        set.forEach((tile, tileIdx) => {
+          const t = createTileElement(tile);
+          if (selectedTile && selectedTile.source === 'board' && selectedTile.setIdx === setIdx && selectedTile.tileIdx === tileIdx) {
+            t.classList.add('selected');
+          }
+          if (isMyTurn) t.onclick = (e) => {
+            e.stopPropagation();
+            selectBoardTile(tile, setIdx, tileIdx);
+          };
+          setDiv.appendChild(t);
         });
         boardEl.appendChild(setDiv);
       });
-    });
+    }
 
     function createTileElement(tile) {
       const t = document.createElement('div');
@@ -116,8 +132,72 @@
       return t;
     }
 
-    function drawTile() { socket.emit('drawTile'); }
-    function submitTurn() { socket.emit('submitTurn'); }
+    function selectRackTile(tile, idx) {
+      if (selectedTile && selectedTile.source === 'board') {
+        // Move board tile back to rack
+        const [moved] = localTableSets[selectedTile.setIdx].splice(selectedTile.tileIdx, 1);
+        if (localTableSets[selectedTile.setIdx].length === 0) localTableSets.splice(selectedTile.setIdx, 1);
+        localRack.push(moved);
+        selectedTile = null;
+      } else {
+        selectedTile = { tile, source: 'rack', tileIdx: idx };
+      }
+      renderAll();
+    }
+
+    function selectBoardTile(tile, setIdx, tileIdx) {
+      if (selectedTile) {
+        if (selectedTile.source === 'rack') {
+          // Insert rack tile into existing set
+          localTableSets[setIdx].splice(tileIdx + 1, 0, selectedTile.tile);
+          localRack.splice(selectedTile.tileIdx, 1);
+          selectedTile = null;
+        } else {
+          // Move board tile to another board set position
+          const [moved] = localTableSets[selectedTile.setIdx].splice(selectedTile.tileIdx, 1);
+          if (localTableSets[selectedTile.setIdx].length === 0) localTableSets.splice(selectedTile.setIdx, 1);
+          localTableSets[setIdx].splice(tileIdx, 0, moved);
+          selectedTile = null;
+        }
+      } else {
+        selectedTile = { tile, source: 'board', setIdx, tileIdx };
+      }
+      renderAll();
+    }
+
+    function createNewSet() {
+      if (selectedTile) {
+        if (selectedTile.source === 'rack') {
+          const [moved] = localRack.splice(selectedTile.tileIdx, 1);
+          localTableSets.push([moved]);
+        } else {
+          const [moved] = localTableSets[selectedTile.setIdx].splice(selectedTile.tileIdx, 1);
+          if (localTableSets[selectedTile.setIdx].length === 0) localTableSets.splice(selectedTile.setIdx, 1);
+          localTableSets.push([moved]);
+        }
+        selectedTile = null;
+        renderAll();
+      }
+    }
+
+    function moveSelectedToSet(setIdx) {
+      if (selectedTile && selectedTile.source === 'rack') {
+        const [moved] = localRack.splice(selectedTile.tileIdx, 1);
+        localTableSets[setIdx].push(moved);
+        selectedTile = null;
+        renderAll();
+      }
+    }
+
+    function drawTile() {
+      selectedTile = null;
+      socket.emit('drawTile');
+    }
+
+    function submitTurn() {
+      selectedTile = null;
+      socket.emit('submitTurn', { tableSets: localTableSets, rack: localRack });
+    }
   </script>
 </body>
-</html> 
+</html>
