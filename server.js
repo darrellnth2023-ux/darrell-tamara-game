@@ -18,8 +18,9 @@ function createDeck() {
       deck.push({ id: id++, num, color });
     }
   });
-  deck.push({ id: id++, num: '💛', color: 'wild-yellow', joker: true });
-  deck.push({ id: id++, num: '💜', color: 'wild-purple', joker: true });
+  // Wildcards: White background, yellow/purple heart with "WILD" text
+  deck.push({ id: id++, num: 'WILD', symbol: '💛', color: 'wild-yellow', joker: true });
+  deck.push({ id: id++, num: 'WILD', symbol: '💜', color: 'wild-purple', joker: true });
   return deck.sort(() => Math.random() - 0.5);
 }
 
@@ -52,20 +53,25 @@ function validateSet(set) {
   }
 
   const realTiles = set.filter(t => !t.joker);
+  const jokers = set.filter(t => t.joker);
+
   if (realTiles.length === 0) return { valid: true };
 
-  // Check 1: Match Set (Same Number)
+  // 1. Check Match Set (Same number, different colors)
   const allSameNum = realTiles.every(t => t.num === realTiles[0].num);
   if (allSameNum) {
     const colors = realTiles.map(t => t.color);
     const uniqueColors = new Set(colors);
     if (colors.length !== uniqueColors.size) {
-      return { valid: false, reason: "Invalid set! Duplicate colors found in match set (e.g. two red tiles)." };
+      return { valid: false, reason: "Invalid Match Set! Duplicate colors detected." };
+    }
+    if (set.length > 4) {
+      return { valid: false, reason: "Invalid Match Set! A match set cannot exceed 4 colors." };
     }
     return { valid: true };
   }
 
-  // Check 2: Run Sequence (Consecutive Numbers, Same Color)
+  // 2. Check Run Sequence (Consecutive numbers, same color)
   const allSameColor = realTiles.every(t => t.color === realTiles[0].color);
   if (allSameColor) {
     let nums = set.map(t => t.joker ? null : t.num);
@@ -77,16 +83,16 @@ function validateSet(set) {
     for (let i = 0; i < nums.length; i++) {
       let expected = startVal + i;
       if (expected < 1 || expected > 13) {
-        return { valid: false, reason: "Invalid sequence! Sequence numbers must stay between 1 and 13." };
+        return { valid: false, reason: "Invalid Sequence! Sequence numbers must stay between 1 and 13." };
       }
       if (nums[i] !== null && nums[i] !== expected) {
-        return { valid: false, reason: "Invalid sequence! Numbers must be consecutive in the exact same color." };
+        return { valid: false, reason: "Invalid Sequence! Gaps detected. Wildcards cannot jump numbers in a sequence." };
       }
     }
     return { valid: true };
   }
 
-  return { valid: false, reason: "Invalid set! Tiles must be either the same number in different colors, or consecutive numbers in the same color." };
+  return { valid: false, reason: "Invalid Set! Tiles must be either matching numbers in different colors, or consecutive numbers in the same color." };
 }
 
 function handleTimeExpired() {
@@ -162,7 +168,7 @@ io.on('connection', (socket) => {
     if (socket.id !== activePlayerId) return;
     const player = players[activePlayerId];
 
-    // 1. Check all sets on the board for invalid sequence or duplicate colors
+    // 1. Verify every set on table is valid
     for (let set of data.tableSets) {
       const check = validateSet(set);
       if (!check.valid) {
@@ -171,7 +177,7 @@ io.on('connection', (socket) => {
       }
     }
 
-    // 2. Check 30-Point First Play Requirement
+    // 2. Check Initial 30 Point Meld Rule
     if (!player.initialMeldMade) {
       let pointsPlayed = 0;
       const origRackIds = new Set(turnSnapshot.rack.map(t => t.id));
@@ -185,7 +191,7 @@ io.on('connection', (socket) => {
       });
 
       if (pointsPlayed < 30) {
-        socket.emit('errorMessage', `Not enough points for initial play! You played ${pointsPlayed} points (Must be 30 or more).`);
+        socket.emit('errorMessage', `Initial play requires at least 30 points from your rack! You played ${pointsPlayed} points.`);
         return;
       }
       player.initialMeldMade = true;
