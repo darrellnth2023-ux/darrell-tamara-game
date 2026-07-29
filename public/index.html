@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Darrell & Tamara's Quality Time Game</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1a1a2e; color: #fff; text-align: center; margin: 0; padding: 20px; }
+    h1 { color: #e94560; margin-bottom: 5px; }
+    p { color: #8d99ae; font-size: 14px; }
+    #board { min-height: 250px; border: 2px dashed #e94560; margin: 20px auto; border-radius: 12px; padding: 15px; max-width: 600px; background: rgba(255,255,255,0.05); }
+    #rack { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; background: #16213e; padding: 15px; border-radius: 12px; max-width: 600px; margin: 0 auto; min-height: 70px; }
+    .tile { width: 42px; height: 55px; background: #fff; color: #000; font-weight: bold; font-size: 18px; line-height: 55px; border-radius: 6px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+    .red { color: #d62828; }
+    .blue { color: #0077b6; }
+    .black { color: #111; }
+    .yellow { color: #f77f00; }
+  </style>
+</head>
+<body>
+  <h1>Darrell & Tamara's Quality Time Game</h1>
+  <p>Connected Live</p>
+
+  <div id="board">
+    <h3>Table Area</h3>
+    <p style="margin-top: 80px;">Mosaics & Runs will appear here</p>
+  </div>
+
+  <h3>Your Rack</h3>
+  <div id="rack">
+    <div class="tile red">7</div>
+    <div class="tile blue">8</div>
+    <div class="tile yellow">9</div>
+    <div class="tile black">10</div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    socket.emit('joinGame', 'Player');
+  </script>
+</body>
+</html>
