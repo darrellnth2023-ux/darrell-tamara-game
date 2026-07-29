@@ -18,7 +18,6 @@ function createDeck() {
       deck.push({ id: id++, num, color });
     }
   });
-  // Unique Wildcards: Yellow Heart and Purple Heart
   deck.push({ id: id++, num: '💛', color: 'wild-yellow', joker: true });
   deck.push({ id: id++, num: '💜', color: 'wild-purple', joker: true });
   return deck.sort(() => Math.random() - 0.5);
@@ -28,10 +27,10 @@ let pool = createDeck();
 let players = {};
 let playerOrder = [];
 let turnIndex = 0;
-let tableSets = []; // Current board state
+let tableSets = [];
 let turnTimer = null;
 let timeLeft = 60;
-let turnSnapshot = null; // Backup state captured at start of turn
+let turnSnapshot = null;
 
 function startTurnTimer() {
   clearInterval(turnTimer);
@@ -47,19 +46,54 @@ function startTurnTimer() {
   }, 1000);
 }
 
-// Check every set on the board for validity
-function isEntireBoardValid(sets) {
-  for (let set of sets) {
-    if (!isValidSet(set)) return false;
+function validateSet(set) {
+  if (set.length < 3) {
+    return { valid: false, reason: "A set must contain at least 3 tiles!" };
   }
-  return true;
+
+  const realTiles = set.filter(t => !t.joker);
+  if (realTiles.length === 0) return { valid: true };
+
+  // Check 1: Match Set (Same Number)
+  const allSameNum = realTiles.every(t => t.num === realTiles[0].num);
+  if (allSameNum) {
+    const colors = realTiles.map(t => t.color);
+    const uniqueColors = new Set(colors);
+    if (colors.length !== uniqueColors.size) {
+      return { valid: false, reason: "Invalid set! Duplicate colors found in match set (e.g. two red tiles)." };
+    }
+    return { valid: true };
+  }
+
+  // Check 2: Run Sequence (Consecutive Numbers, Same Color)
+  const allSameColor = realTiles.every(t => t.color === realTiles[0].color);
+  if (allSameColor) {
+    let nums = set.map(t => t.joker ? null : t.num);
+    let firstKnownIdx = nums.findIndex(n => n !== null);
+    if (firstKnownIdx === -1) return { valid: true };
+
+    let startVal = nums[firstKnownIdx] - firstKnownIdx;
+
+    for (let i = 0; i < nums.length; i++) {
+      let expected = startVal + i;
+      if (expected < 1 || expected > 13) {
+        return { valid: false, reason: "Invalid sequence! Sequence numbers must stay between 1 and 13." };
+      }
+      if (nums[i] !== null && nums[i] !== expected) {
+        return { valid: false, reason: "Invalid sequence! Numbers must be consecutive in the exact same color." };
+      }
+    }
+    return { valid: true };
+  }
+
+  return { valid: false, reason: "Invalid set! Tiles must be either the same number in different colors, or consecutive numbers in the same color." };
 }
 
 function handleTimeExpired() {
   const activePlayerId = playerOrder[turnIndex];
-  // If board is valid when timer expires, keep changes.
-  // If ANY sequence is incomplete/invalid (e.g. "1 3 4 5"), REVERT board & draw penalty tile.
-  if (isEntireBoardValid(tableSets)) {
+  let allValid = tableSets.every(set => validateSet(set).valid);
+
+  if (allValid) {
     nextTurn();
   } else {
     revertTurnAndDrawPenalty(activePlayerId);
@@ -71,7 +105,6 @@ function revertTurnAndDrawPenalty(activeId) {
     tableSets = JSON.parse(JSON.stringify(turnSnapshot.tableSets));
     if (players[activeId]) {
       players[activeId].rack = JSON.parse(JSON.stringify(turnSnapshot.rack));
-      // Penalty: Auto-draw a tile from pool for letting time run out on an invalid board
       if (pool.length > 0) {
         players[activeId].rack.push(pool.pop());
       }
@@ -99,42 +132,6 @@ function saveSnapshot() {
   }
 }
 
-function isValidSet(set) {
-  if (set.length < 3) return false;
-
-  const realTiles = set.filter(t => !t.joker);
-  if (realTiles.length === 0) return true; // All wildcards
-
-  // Check 1: Same Number, All Different Colors
-  const allSameNum = realTiles.every(t => t.num === realTiles[0].num);
-  if (allSameNum) {
-    const colors = realTiles.map(t => t.color);
-    const uniqueColors = new Set(colors);
-    return colors.length === uniqueColors.size; 
-  }
-
-  // Check 2: Same Color, Exact Consecutive Numbers (No gaps allowed!)
-  const allSameColor = realTiles.every(t => t.color === realTiles[0].color);
-  if (allSameColor) {
-    // Map non-wildcard numbers to their positions
-    let nums = set.map(t => t.joker ? null : t.num);
-    let firstKnownIdx = nums.findIndex(n => n !== null);
-    if (firstKnownIdx === -1) return true;
-    
-    let startVal = nums[firstKnownIdx] - firstKnownIdx;
-
-    for (let i = 0; i < nums.length; i++) {
-      let expected = startVal + i;
-      if (expected < 1 || expected > 13) return false;
-      // If a position doesn't match expected consecutive sequence (gap found), set is INVALID
-      if (nums[i] !== null && nums[i] !== expected) return false;
-    }
-    return true;
-  }
-
-  return false;
-}
-
 function getGameState() {
   return {
     players,
@@ -160,23 +157,38 @@ io.on('connection', (socket) => {
     io.emit('gameUpdate', getGameState());
   });
 
-  socket.on('updateBoardState', (newTableSets) => {
-    const activePlayerId = playerOrder[turnIndex];
-    if (socket.id !== activePlayerId) return;
-    tableSets = newTableSets;
-    io.emit('gameUpdate', getGameState());
-  });
-
   socket.on('submitTurn', (data) => {
     const activePlayerId = playerOrder[turnIndex];
     if (socket.id !== activePlayerId) return;
+    const player = players[activePlayerId];
 
-    // Reject turn if any set on the board has gaps or invalid sequences
+    // 1. Check all sets on the board for invalid sequence or duplicate colors
     for (let set of data.tableSets) {
-      if (!isValidSet(set)) {
-        socket.emit('errorMessage', 'Invalid sequence on board! Make sure there are no gaps or incomplete sets.');
+      const check = validateSet(set);
+      if (!check.valid) {
+        socket.emit('errorMessage', check.reason);
         return;
       }
+    }
+
+    // 2. Check 30-Point First Play Requirement
+    if (!player.initialMeldMade) {
+      let pointsPlayed = 0;
+      const origRackIds = new Set(turnSnapshot.rack.map(t => t.id));
+
+      data.tableSets.forEach(set => {
+        set.forEach(t => {
+          if (origRackIds.has(t.id)) {
+            pointsPlayed += t.joker ? 0 : (parseInt(t.num) || 0);
+          }
+        });
+      });
+
+      if (pointsPlayed < 30) {
+        socket.emit('errorMessage', `Not enough points for initial play! You played ${pointsPlayed} points (Must be 30 or more).`);
+        return;
+      }
+      player.initialMeldMade = true;
     }
 
     tableSets = data.tableSets;
@@ -188,7 +200,6 @@ io.on('connection', (socket) => {
     const activePlayerId = playerOrder[turnIndex];
     if (socket.id !== activePlayerId) return;
 
-    // Reset board before drawing if player manual-draws
     if (turnSnapshot) {
       tableSets = JSON.parse(JSON.stringify(turnSnapshot.tableSets));
       players[activePlayerId].rack = JSON.parse(JSON.stringify(turnSnapshot.rack));
