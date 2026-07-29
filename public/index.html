@@ -1,4 +1,4 @@
-  <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -15,22 +15,23 @@
     button.secondary { background: #0f3460; }
     button:disabled { opacity: 0.4; cursor: not-allowed; }
 
-    /* Expanded Main Board Area */
     #board { min-height: 380px; width: 95%; max-width: 1000px; border: 3px dashed #e94560; margin: 10px auto; border-radius: 12px; padding: 15px; background: rgba(255,255,255,0.03); display: flex; flex-wrap: wrap; gap: 15px; align-content: flex-start; justify-content: flex-start; overflow-x: auto; }
-    
     .set-box { border: 2px solid #4ecca3; padding: 8px; border-radius: 8px; background: rgba(78, 204, 163, 0.05); display: flex; gap: 5px; align-items: center; min-width: 150px; min-height: 70px; }
-    
     #rack { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; background: #16213e; padding: 12px; border-radius: 12px; max-width: 1000px; width: 95%; margin: 0 auto; min-height: 85px; border: 2px solid #0f3460; }
 
-    .tile { width: 42px; height: 58px; background: #fff; font-weight: bold; font-size: 20px; line-height: 58px; border-radius: 6px; box-shadow: 0 3px 6px rgba(0,0,0,0.4); display: inline-block; cursor: pointer; user-select: none; margin: 2px; text-align: center; }
+    /* All Tiles Have Solid White Background */
+    .tile { width: 44px; height: 60px; background: #ffffff; font-weight: bold; font-size: 20px; border-radius: 6px; box-shadow: 0 3px 6px rgba(0,0,0,0.4); display: inline-flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; user-select: none; margin: 2px; text-align: center; color: #000; border: 1px solid #ccc; }
     .selected { outline: 3px solid #f1c40f; transform: translateY(-4px); }
 
     .red { color: #d62828; }
     .blue { color: #0077b6; }
     .black { color: #111; }
     .yellow { color: #f77f00; }
-    .wild-yellow { background: #f1c40f; color: #000; font-size: 24px; }
-    .wild-purple { background: #8e44ad; color: #fff; font-size: 24px; }
+
+    /* Wildcard Design */
+    .wild-container { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+    .wild-symbol { font-size: 22px; line-height: 1; }
+    .wild-text { font-size: 8px; font-weight: 900; color: #000000; text-transform: uppercase; letter-spacing: 0.5px; line-height: 1; margin-top: 2px; }
   </style>
 </head>
 <body>
@@ -43,7 +44,7 @@
     <button id="btnSubmit" onclick="submitTurn()">End Turn</button>
   </div>
 
-  <h3>Main Playing Table (Tap empty board space or an existing set to place tiles)</h3>
+  <h3>Main Playing Table</h3>
   <div id="board" onclick="handleBoardClick(event)"></div>
 
   <h3>Your Rack</h3>
@@ -103,7 +104,10 @@
         if (selectedTile && selectedTile.source === 'rack' && selectedTile.tileIdx === idx) {
           t.classList.add('selected');
         }
-        if (isMyTurn) t.onclick = () => selectRackTile(tile, idx);
+        if (isMyTurn) t.onclick = (e) => {
+          e.stopPropagation();
+          selectRackTile(tile, idx);
+        };
         rackEl.appendChild(t);
       });
 
@@ -137,14 +141,27 @@
 
     function createTileElement(tile) {
       const t = document.createElement('div');
-      t.className = `tile ${tile.color}`;
-      t.innerText = tile.num;
+      t.className = 'tile';
+      if (tile.joker) {
+        t.innerHTML = `<div class="wild-container"><span class="wild-symbol">${tile.symbol}</span><span class="wild-text">WILD</span></div>`;
+      } else {
+        t.classList.add(tile.color);
+        t.innerText = tile.num;
+      }
       return t;
     }
 
     function selectRackTile(tile, idx) {
       if (selectedTile && selectedTile.source === 'board') {
-        // Return tile from board back to rack
+        // PREVENT RETURNING WILD TILE TO RACK
+        if (selectedTile.tile.joker) {
+          alert("A Wild tile cannot be moved back to your rack once played! It must be moved directly to another set on the board.");
+          selectedTile = null;
+          renderAll();
+          return;
+        }
+
+        // Return non-wild tile from board back to rack
         const [moved] = localTableSets[selectedTile.setIdx].splice(selectedTile.tileIdx, 1);
         if (localTableSets[selectedTile.setIdx].length === 0) localTableSets.splice(selectedTile.setIdx, 1);
         localRack.push(moved);
@@ -158,10 +175,12 @@
     function selectBoardTile(tile, setIdx, tileIdx) {
       if (selectedTile) {
         if (selectedTile.source === 'rack') {
+          // Play tile from rack onto board
           localTableSets[setIdx].splice(tileIdx + 1, 0, selectedTile.tile);
           localRack.splice(selectedTile.tileIdx, 1);
           selectedTile = null;
         } else {
+          // Move Wild or normal tile between sets on the board
           const [moved] = localTableSets[selectedTile.setIdx].splice(selectedTile.tileIdx, 1);
           if (localTableSets[selectedTile.setIdx].length === 0) localTableSets.splice(selectedTile.setIdx, 1);
           localTableSets[setIdx].splice(tileIdx, 0, moved);
@@ -173,7 +192,6 @@
       renderAll();
     }
 
-    // Tapping blank board area creates a new standalone set automatically
     function handleBoardClick(e) {
       if (e.target.id === 'board' && selectedTile && isMyTurn) {
         if (selectedTile.source === 'rack') {
@@ -209,4 +227,4 @@
     }
   </script>
 </body>
-</html>    
+</html>
