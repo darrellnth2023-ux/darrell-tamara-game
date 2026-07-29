@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+  <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -8,15 +8,18 @@
     * { box-sizing: border-box; touch-action: manipulation; }
     body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; color: #fff; text-align: center; margin: 0; padding: 15px; }
     h1 { color: #e94560; margin: 0 0 5px 0; font-size: 22px; }
-    #status { color: #4ecca3; font-weight: bold; margin-bottom: 10px; }
-    .controls { margin-bottom: 15px; }
-    button { background: #e94560; color: #fff; border: none; padding: 10px 18px; font-size: 16px; font-weight: bold; border-radius: 8px; cursor: pointer; }
-    button:active { background: #0f3460; }
-    
-    #board { min-height: 200px; border: 2px dashed #e94560; margin: 10px auto; border-radius: 12px; padding: 10px; max-width: 600px; background: rgba(255,255,255,0.05); display: flex; flex-wrap: wrap; gap: 8px; align-content: flex-start; }
+    #turnBanner { font-size: 18px; font-weight: bold; margin-bottom: 10px; color: #f1c40f; }
+    #timer { font-size: 24px; font-weight: bold; color: #e94560; margin-bottom: 10px; }
+    .controls { display: flex; gap: 10px; justify-content: center; margin-bottom: 15px; }
+    button { background: #e94560; color: #fff; border: none; padding: 10px 16px; font-size: 15px; font-weight: bold; border-radius: 8px; cursor: pointer; }
+    button.secondary { background: #0f3460; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .area { border: 2px dashed #0f3460; margin: 10px auto; border-radius: 12px; padding: 10px; max-width: 600px; background: rgba(255,255,255,0.03); min-height: 80px; }
+    #stagingArea { border-color: #f1c40f; }
     #rack { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; background: #16213e; padding: 12px; border-radius: 12px; max-width: 600px; margin: 0 auto; min-height: 80px; border: 2px solid #0f3460; }
-    
-    .tile { width: 40px; height: 55px; background: #fff; font-weight: bold; font-size: 18px; line-height: 55px; border-radius: 6px; box-shadow: 0 3px 6px rgba(0,0,0,0.4); display: inline-block; cursor: pointer; user-select: none; }
+
+    .tile { width: 40px; height: 55px; background: #fff; font-weight: bold; font-size: 18px; line-height: 55px; border-radius: 6px; box-shadow: 0 3px 6px rgba(0,0,0,0.4); display: inline-block; cursor: pointer; user-select: none; margin: 3px; }
     .red { color: #d62828; }
     .blue { color: #0077b6; }
     .black { color: #111; }
@@ -26,14 +29,19 @@
 </head>
 <body>
   <h1>Darrell & Tamara's Quality Time Game</h1>
-  <div id="status">Connecting...</div>
+  <div id="turnBanner">Connecting...</div>
+  <div id="timer">⏱️ 60s</div>
 
   <div class="controls">
-    <button onclick="drawTile()">Draw Tile (<span id="poolCount">0</span> left)</button>
+    <button id="btnDraw" onclick="drawTile()">Draw Tile (<span id="poolCount">0</span> left)</button>
+    <button id="btnSubmit" class="secondary" onclick="submitTurn()">End Turn / Play Set</button>
   </div>
 
-  <h3>Table Area (Tap a tile on your rack to play it here)</h3>
-  <div id="board"></div>
+  <h3>Staging Area (Your Uncommitted Play)</h3>
+  <div id="stagingArea" class="area"></div>
+
+  <h3>Table Area (Completed Mosaics)</h3>
+  <div id="board" class="area"></div>
 
   <h3>Your Rack</h3>
   <div id="rack"></div>
@@ -45,42 +53,71 @@
 
     socket.on('connect', () => {
       myId = socket.id;
-      document.getElementById('status').innerText = 'Connected Live';
       socket.emit('joinGame', 'Player');
+    });
+
+    socket.on('timerUpdate', (time) => {
+      document.getElementById('timer').innerText = `⏱️ ${time}s`;
+    });
+
+    socket.on('errorMessage', (msg) => {
+      alert(msg);
     });
 
     socket.on('gameUpdate', (data) => {
       document.getElementById('poolCount').innerText = data.poolCount;
       
+      const isMyTurn = data.activePlayerId === myId;
+      document.getElementById('turnBanner').innerText = isMyTurn ? "YOUR TURN!" : "Opponent's Turn...";
+      document.getElementById('btnDraw').disabled = !isMyTurn;
+      document.getElementById('btnSubmit').disabled = !isMyTurn;
+
       // Render Rack
       const rackEl = document.getElementById('rack');
       rackEl.innerHTML = '';
-      if (data.players[socket.id]) {
-        data.players[socket.id].rack.forEach(tile => {
-          const t = document.createElement('div');
-          t.className = `tile ${tile.color}`;
-          t.innerText = tile.num;
-          t.onclick = () => socket.emit('playTileToBoard', tile.id);
+      if (data.players[myId]) {
+        data.players[myId].rack.forEach(tile => {
+          const t = createTileElement(tile);
+          if (isMyTurn) t.onclick = () => socket.emit('stageTile', tile.id);
           rackEl.appendChild(t);
         });
       }
+
+      // Render Staging
+      const stagingEl = document.getElementById('stagingArea');
+      stagingEl.innerHTML = '';
+      data.stagingTiles.forEach(tile => {
+        const t = createTileElement(tile);
+        if (isMyTurn) t.onclick = () => socket.emit('recallTile', tile.id);
+        stagingEl.appendChild(t);
+      });
 
       // Render Board
       const boardEl = document.getElementById('board');
       boardEl.innerHTML = '';
       data.tableSets.forEach(set => {
+        const setDiv = document.createElement('div');
+        setDiv.style.margin = "5px";
+        setDiv.style.display = "inline-block";
+        setDiv.style.border = "1px solid #4ecca3";
+        setDiv.style.padding = "4px";
+        setDiv.style.borderRadius = "6px";
         set.forEach(tile => {
-          const t = document.createElement('div');
-          t.className = `tile ${tile.color}`;
-          t.innerText = tile.num;
-          boardEl.appendChild(t);
+          setDiv.appendChild(createTileElement(tile));
         });
+        boardEl.appendChild(setDiv);
       });
     });
 
-    function drawTile() {
-      socket.emit('drawTile');
+    function createTileElement(tile) {
+      const t = document.createElement('div');
+      t.className = `tile ${tile.color}`;
+      t.innerText = tile.num;
+      return t;
     }
+
+    function drawTile() { socket.emit('drawTile'); }
+    function submitTurn() { socket.emit('submitTurn'); }
   </script>
 </body>
-</html>
+</html> 
