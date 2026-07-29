@@ -18,8 +18,9 @@ function createDeck() {
       deck.push({ id: id++, num, color });
     }
   });
-  deck.push({ id: id++, num: 'J', color: 'wild', joker: true });
-  deck.push({ id: id++, num: 'J', color: 'wild', joker: true });
+  // Unique Wildcards: Yellow Heart and Purple Heart
+  deck.push({ id: id++, num: '💛', color: 'wild-yellow', joker: true });
+  deck.push({ id: id++, num: '💜', color: 'wild-purple', joker: true });
   return deck.sort(() => Math.random() - 0.5);
 }
 
@@ -27,10 +28,10 @@ let pool = createDeck();
 let players = {};
 let playerOrder = [];
 let turnIndex = 0;
-let tableSets = [];
-let stagingTiles = [];
+let tableSets = []; // Array of sets currently on the board
 let turnTimer = null;
 let timeLeft = 60;
+let turnSnapshot = null; // Backup to restore board if turn fails or timer expires
 
 function startTurnTimer() {
   clearInterval(turnTimer);
@@ -41,17 +42,17 @@ function startTurnTimer() {
     io.emit('timerUpdate', timeLeft);
     if (timeLeft <= 0) {
       clearInterval(turnTimer);
-      handleTimeout();
+      revertTurn();
     }
   }, 1000);
 }
 
-function handleTimeout() {
-  const activePlayerId = playerOrder[turnIndex];
-  if (activePlayerId && players[activePlayerId]) {
-    // Return unsubmitted staging tiles back to active player's rack
-    players[activePlayerId].rack.push(...stagingTiles);
-    stagingTiles = [];
+function revertTurn() {
+  if (turnSnapshot) {
+    tableSets = JSON.parse(JSON.stringify(turnSnapshot.tableSets));
+    if (players[turnSnapshot.activePlayerId]) {
+      players[turnSnapshot.activePlayerId].rack = JSON.parse(JSON.stringify(turnSnapshot.rack));
+    }
   }
   nextTurn();
 }
@@ -59,9 +60,53 @@ function handleTimeout() {
 function nextTurn() {
   if (playerOrder.length === 0) return;
   turnIndex = (turnIndex + 1) % playerOrder.length;
-  stagingTiles = [];
+  saveSnapshot();
   startTurnTimer();
   io.emit('gameUpdate', getGameState());
+}
+
+function saveSnapshot() {
+  const activeId = playerOrder[turnIndex];
+  if (activeId && players[activeId]) {
+    turnSnapshot = {
+      activePlayerId: activeId,
+      tableSets: JSON.parse(JSON.stringify(tableSets)),
+      rack: JSON.parse(JSON.stringify(players[activeId].rack))
+    };
+  }
+}
+
+function isValidSet(set) {
+  if (set.length < 3) return false;
+
+  const realTiles = set.filter(t => !t.joker);
+  if (realTiles.length === 0) return true; // All jokers
+
+  // Check 1: Same Number, All Different Colors (Match Set)
+  const allSameNum = realTiles.every(t => t.num === realTiles[0].num);
+  if (allSameNum) {
+    const colors = realTiles.map(t => t.color);
+    const uniqueColors = new Set(colors);
+    return colors.length === uniqueColors.size; // No duplicate colors allowed
+  }
+
+  // Check 2: Same Color, Consecutive Numbers (Sequence Run)
+  const allSameColor = realTiles.every(t => t.color === realTiles[0].color);
+  if (allSameColor) {
+    // Check numerical order accounting for missing gaps
+    let nums = set.map(t => t.joker ? null : t.num);
+    let firstKnownIdx = nums.findIndex(n => n !== null);
+    let startVal = nums[firstKnownIdx] - firstKnownIdx;
+
+    for (let i = 0; i < nums.length; i++) {
+      let expected = startVal + i;
+      if (expected < 1 || expected > 13) return false;
+      if (nums[i] !== null && nums[i] !== expected) return false;
+    }
+    return true;
+  }
+
+  return false;
 }
 
 function getGameState() {
@@ -71,7 +116,6 @@ function getGameState() {
     activePlayerId: playerOrder[turnIndex],
     poolCount: pool.length,
     tableSets,
-    stagingTiles,
     timeLeft
   };
 }
@@ -82,53 +126,59 @@ io.on('connection', (socket) => {
       let hand = pool.splice(0, 14);
       players[socket.id] = { id: socket.id, name: name || 'Player', rack: hand, initialMeldMade: false };
       playerOrder.push(socket.id);
-      if (playerOrder.length === 1) startTurnTimer();
+      if (playerOrder.length === 1) {
+        saveSnapshot();
+        startTurnTimer();
+      }
     }
     io.emit('gameUpdate', getGameState());
   });
 
-  socket.on('stageTile', (tileId) => {
+  socket.on('updateBoardState', (newTableSets) => {
     const activePlayerId = playerOrder[turnIndex];
     if (socket.id !== activePlayerId) return;
-    const player = players[activePlayerId];
-    const tileIdx = player.rack.findIndex(t => t.id === tileId);
-    if (tileIdx !== -1) {
-      const [tile] = player.rack.splice(tileIdx, 1);
-      stagingTiles.push(tile);
-      io.emit('gameUpdate', getGameState());
-    }
+    tableSets = newTableSets;
+    io.emit('gameUpdate', getGameState());
   });
 
-  socket.on('recallTile', (tileId) => {
+  socket.on('submitTurn', (data) => {
     const activePlayerId = playerOrder[turnIndex];
     if (socket.id !== activePlayerId) return;
-    const tileIdx = stagingTiles.findIndex(t => t.id === tileId);
-    if (tileIdx !== -1) {
-      const [tile] = stagingTiles.splice(tileIdx, 1);
-      players[activePlayerId].rack.push(tile);
-      io.emit('gameUpdate', getGameState());
-    }
-  });
 
-  socket.on('submitTurn', () => {
-    const activePlayerId = playerOrder[turnIndex];
-    if (socket.id !== activePlayerId) return;
     const player = players[activePlayerId];
 
-    if (stagingTiles.length === 0) return;
+    // Validate that every set left on the table contains at least 3 valid tiles
+    for (let set of data.tableSets) {
+      if (!isValidSet(set)) {
+        socket.emit('errorMessage', 'Invalid set on board! Sets must be 3+ tiles: either same number in DIFFERENT colors, or consecutive numbers in SAME color.');
+        return;
+      }
+    }
 
-    // Check Initial Meld 30 Point Rule
+    // Update state
+    tableSets = data.tableSets;
+    player.rack = data.rack;
+
+    // Check Initial 30-Point Meld Requirement
     if (!player.initialMeldMade) {
-      const turnPoints = stagingTiles.reduce((sum, t) => sum + (t.joker ? 0 : t.num), 0);
-      if (turnPoints < 30) {
-        socket.emit('errorMessage', 'Initial play requires at least 30 total points!');
+      let pointsPlayed = 0;
+      // Calculate total points played from rack
+      const origRackIds = new Set(turnSnapshot.rack.map(t => t.id));
+      data.tableSets.forEach(set => {
+        set.forEach(t => {
+          if (origRackIds.has(t.id)) {
+            pointsPlayed += t.joker ? 0 : parseInt(t.num) || 0;
+          }
+        });
+      });
+
+      if (pointsPlayed < 30) {
+        socket.emit('errorMessage', 'Initial play requires at least 30 points from your rack!');
         return;
       }
       player.initialMeldMade = true;
     }
 
-    tableSets.push([...stagingTiles]);
-    stagingTiles = [];
     nextTurn();
   });
 
@@ -136,12 +186,7 @@ io.on('connection', (socket) => {
     const activePlayerId = playerOrder[turnIndex];
     if (socket.id !== activePlayerId) return;
 
-    // Recall any staging tiles before drawing
-    if (stagingTiles.length > 0) {
-      players[activePlayerId].rack.push(...stagingTiles);
-      stagingTiles = [];
-    }
-
+    revertTurn(); // Revert board modifications before drawing
     if (pool.length > 0) {
       players[activePlayerId].rack.push(pool.pop());
     }
@@ -154,7 +199,6 @@ io.on('connection', (socket) => {
     if (playerOrder.length === 0) {
       pool = createDeck();
       tableSets = [];
-      stagingTiles = [];
       clearInterval(turnTimer);
     } else {
       turnIndex = turnIndex % playerOrder.length;
