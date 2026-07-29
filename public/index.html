@@ -5,40 +5,82 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Darrell & Tamara's Quality Time Game</title>
   <style>
-    * { box-sizing: border-box; }
-    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1a1a2e; color: #fff; text-align: center; margin: 0; padding: 20px; }
-    h1 { color: #e94560; margin-bottom: 5px; }
-    p { color: #8d99ae; font-size: 14px; }
-    #board { min-height: 250px; border: 2px dashed #e94560; margin: 20px auto; border-radius: 12px; padding: 15px; max-width: 600px; background: rgba(255,255,255,0.05); }
-    #rack { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; background: #16213e; padding: 15px; border-radius: 12px; max-width: 600px; margin: 0 auto; min-height: 70px; }
-    .tile { width: 42px; height: 55px; background: #fff; color: #000; font-weight: bold; font-size: 18px; line-height: 55px; border-radius: 6px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+    * { box-sizing: border-box; touch-action: manipulation; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; color: #fff; text-align: center; margin: 0; padding: 15px; }
+    h1 { color: #e94560; margin: 0 0 5px 0; font-size: 22px; }
+    #status { color: #4ecca3; font-weight: bold; margin-bottom: 10px; }
+    .controls { margin-bottom: 15px; }
+    button { background: #e94560; color: #fff; border: none; padding: 10px 18px; font-size: 16px; font-weight: bold; border-radius: 8px; cursor: pointer; }
+    button:active { background: #0f3460; }
+    
+    #board { min-height: 200px; border: 2px dashed #e94560; margin: 10px auto; border-radius: 12px; padding: 10px; max-width: 600px; background: rgba(255,255,255,0.05); display: flex; flex-wrap: wrap; gap: 8px; align-content: flex-start; }
+    #rack { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; background: #16213e; padding: 12px; border-radius: 12px; max-width: 600px; margin: 0 auto; min-height: 80px; border: 2px solid #0f3460; }
+    
+    .tile { width: 40px; height: 55px; background: #fff; font-weight: bold; font-size: 18px; line-height: 55px; border-radius: 6px; box-shadow: 0 3px 6px rgba(0,0,0,0.4); display: inline-block; cursor: pointer; user-select: none; }
     .red { color: #d62828; }
     .blue { color: #0077b6; }
     .black { color: #111; }
     .yellow { color: #f77f00; }
+    .wild { color: #9b59b6; background: #f1c40f; }
   </style>
 </head>
 <body>
   <h1>Darrell & Tamara's Quality Time Game</h1>
-  <p>Connected Live</p>
+  <div id="status">Connecting...</div>
 
-  <div id="board">
-    <h3>Table Area</h3>
-    <p style="margin-top: 80px;">Mosaics & Runs will appear here</p>
+  <div class="controls">
+    <button onclick="drawTile()">Draw Tile (<span id="poolCount">0</span> left)</button>
   </div>
+
+  <h3>Table Area (Tap a tile on your rack to play it here)</h3>
+  <div id="board"></div>
 
   <h3>Your Rack</h3>
-  <div id="rack">
-    <div class="tile red">7</div>
-    <div class="tile blue">8</div>
-    <div class="tile yellow">9</div>
-    <div class="tile black">10</div>
-  </div>
+  <div id="rack"></div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const socket = io();
-    socket.emit('joinGame', 'Player');
+    let myId = null;
+
+    socket.on('connect', () => {
+      myId = socket.id;
+      document.getElementById('status').innerText = 'Connected Live';
+      socket.emit('joinGame', 'Player');
+    });
+
+    socket.on('gameUpdate', (data) => {
+      document.getElementById('poolCount').innerText = data.poolCount;
+      
+      // Render Rack
+      const rackEl = document.getElementById('rack');
+      rackEl.innerHTML = '';
+      if (data.players[socket.id]) {
+        data.players[socket.id].rack.forEach(tile => {
+          const t = document.createElement('div');
+          t.className = `tile ${tile.color}`;
+          t.innerText = tile.num;
+          t.onclick = () => socket.emit('playTileToBoard', tile.id);
+          rackEl.appendChild(t);
+        });
+      }
+
+      // Render Board
+      const boardEl = document.getElementById('board');
+      boardEl.innerHTML = '';
+      data.tableSets.forEach(set => {
+        set.forEach(tile => {
+          const t = document.createElement('div');
+          t.className = `tile ${tile.color}`;
+          t.innerText = tile.num;
+          boardEl.appendChild(t);
+        });
+      });
+    });
+
+    function drawTile() {
+      socket.emit('drawTile');
+    }
   </script>
 </body>
 </html>
